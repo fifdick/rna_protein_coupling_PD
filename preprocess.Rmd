@@ -1,0 +1,180 @@
+## Read metadata
+
+```{r}
+info_rna <- readRDS("./rdsData/info_rna.rds") 
+info_rna_pd <- readRDS("./rdsData/info_rna_pd.rds")
+#proteomics experiment 
+info <- readRDS("./rdsData/info.rds")
+```
+
+## Load and normalize proteomics data 
+
+From the ProteinGroups (maxQuant output, not provided) file create three count matrices:  
+* raw from maxQuant output (loaded from rds (rawData.rds)
+* remove zeros
+* with quantile normalization 
+* with quantile normalization followed by batch correction
+* normalized with the TMT normalization function of Proteus
+* normalized with TMT norm. func. of Proteus followed by batch correction
+
+
+```{r}
+rawData <- readRDS("./rdsData/rawData.rds")
+```
+
+```{r}
+# determine proteins that are making up 5% of the sum of all protein intensities in more than n samples
+topProts <- investigateTopGenes(rawData, name_cols = c("Gene.names", "Protein.IDs"))[[1]][,"Protein.IDs"]
+# remove extremly abundant proteins and zeros
+rawData_filt  <- rawData %>%
+	dplyr::mutate_at(info$reporter.intensity.id, as.numeric) %>%
+	dplyr::filter(!(Protein.IDs %in% topProts)) %>%
+	dplyr::filter_if(is.numeric, all_vars(. != 0))
+
+# Alternative to removing all zeros:
+# Removing proteins that have intensity == 0 in **all** samples within a batch,
+# in at least **n** batches
+# rawData_filt <- remove_zeros(rawData_filt, info, n = 2)
+
+# Normalize options
+m_quant  <- rawData_filt %>% loading_norm(., info, method = "quantile", within_batch = T, use_median = T, name_cols = c("Gene.names", "Protein.IDs")) 
+rownames(m_quant) <- m_quant$Protein.IDs
+
+m_lib <-  rawData_filt %>% loading_norm(., info, method = "lib_size", within_batch = T, use_median = T, name_cols = c("Gene.names", "Protein.IDs"))  
+rownames(m_lib) <- m_lib$Protein.IDs
+
+m_logLib <-  rawData_filt %>% loading_norm(., info, method = "log_lib_size", within_batch = T, use_median = T, name_cols = c("Gene.names", "Protein.IDs")) 
+rownames(m_lib) <- m_lib$Proten.IDs
+
+# Apply batch correction 
+m_lib_batch <- batch_corr(m_lib, info)
+rownames(m_lib) <- m_lib$Protein.IDs
+
+# Apply batch correction 
+m_batch <- batch_corr(rawData_filt, info)
+rownames(m_batch) <- m_batch$Protein.IDs
+
+# Apply batch correction followed by quantile correction
+m_batch <- batch_corr(rawData_filt, info)
+m_batch_norm <- loading_norm(m_batch, info, method = "log_lib_size")
+rownames(m_batch_norm) <- m_batch_norm$Protein.IDs
+
+# Apply batch correction followed by scaling
+m_batch <- batch_corr(rawData_filt, info)
+# dividing by root mean square sqrt(sum(x^2)/(n-1)), keep center == F 
+m_batch_scld <- as.data.frame(scale(m_batch[,-c(1,2)], center = F))
+m_batch_scld$Protein.IDs  <- m_batch$Protein.IDs
+m_batch_scld$Gene.names  <- m_batch$Gene.names
+rownames(m_batch_scld) <- m_batch_scld$Protein.IDs
+```
+
+### QC Suppl. Figure 1
+
+
+```{r}
+rownames(rawData_filt)  <- rawData_filt$Protein.IDs
+rawData_filt %>% dplyr::select(-Gene.names, -Protein.IDs) -> df
+rownames(info) <- info$reporter.intensity.id
+ggbiplot::ggbiplot(prcomp(t(df), scale = T),
+		   groups = info[colnames(df),"batch"],
+		   varname.size = 0, size = 1,
+		   var.axes = F, ellipse = T) +
+	  cowplot::theme_cowplot()  +
+	  labs(tag = "A", col = "Groups") +
+	  theme(legend.position = "None") -> p1
+rownames(m_quant)  <- m_quant$Protein.IDs
+m_quant %>% dplyr::select(-Gene.names, -Protein.IDs) -> df
+rownames(info) <- info$reporter.intensity.id
+ggbiplot::ggbiplot(prcomp(t(df), scale = T),
+		   groups = info[colnames(df),"batch"],
+		   varname.size = 0, size = 1,
+		   var.axes = F, ellipse = T) +
+	  cowplot::theme_cowplot()  +
+	  labs(col = "Groups", tag = "B") -> p1.1
+rownames(m_batch_scld)  <- m_batch_scld$Protein.IDs
+m_batch_scld %>% dplyr::select(-Gene.names, -Protein.IDs) -> df
+rownames(info) <- info$reporter.intensity.id
+ggbiplot::ggbiplot(prcomp(t(df), scale = T),
+		   groups = info[colnames(df),"batch"],
+		   varname.size = 0, size = 1,
+		   var.axes = F, ellipse = F) +
+	  cowplot::theme_cowplot()  +
+	  labs(col = "Groups", tag = "C") +
+	  theme(legend.position = "bottom") -> p2
+ggbiplot::ggbiplot(prcomp(t(df), scale = T),
+		   groups = info[colnames(df),"condition1"],
+		   varname.size = 0, size = 1,
+		   var.axes = F, ellipse = F) +
+	  cowplot::theme_cowplot()  +
+	  labs(col = "Groups", tag = "D") +
+	  scale_color_manual(values = cols) +
+	  theme(legend.position = "bottom") -> p3
+  
+pdf("./result_figs/Supp/proteomics_qc/SFig1.pdf", width = 10, height = 10)
+(p1 + p1.1 ) / (p2 + p3)
+dev.off()
+```
+
+
+## RNA for HA and YG samples
+
+```{r gene-levelCPM}
+# gene-level counts
+# create gene-tx annotation from ucsc hg19 gtf
+annot_general <- DTU::get_annot("86", gtf_path = gtfPath, strip_version = F)
+tx2gene <- annot_general[,c(2,1)]
+colnames(tx2gene) <- c("tx","gene")
+# salmon raw data dirs
+files_per_cohort <- file.path(salmonPath, info_rna$Norway$sample_id, "quant.sf")
+names(files_per_cohort)  <- info_rna$Norway$sample_id
+# import summerized to gene-level (txOut=F)
+cpmAll <- import_and_filter(files_per_cohort, info_rna$Norway$sample_id, tx2gene, gtfPath)
+gene_symbols <- cpmAll %>%
+	dplyr::select(gene_id, gene_name)
+```
+
+
+
+## RNA for PD samples
+
+Raw RNA from salmon Dirs and sample ids from RNASeq experiment info file
+
+cpmAll_pd
+
+```{r}
+# Included PD in the study
+annot_general <- DTU::get_annot("86", gtf_path = gtfPath, strip_version = F)
+tx2gene <- annot_general[,c(2,1)]
+colnames(tx2gene) <- c("tx","gene")
+# salmon raw data dirs
+files_per_cohort <- file.path(salmonPath, info_rna_pd$sample_id, "quant.sf")
+names(files_per_cohort)  <-  info_rna_pd$sample_id
+cpmAll_pd <- import_and_filter(files_per_cohort, info_rna_pd$sample_id, tx2gene, gtfPath)
+```
+
+
+## Saving preprocessed data for paper code 
+
+```{r}
+saveRDS(cpmAll, "../../rna_protein_coupling_PD/rdsData/cpmAll.rds")
+saveRDS(cpmAll_pd, "../../rna_protein_coupling_PD/rdsData/cpmAll.rds")
+saveRDS(rawData_filt, "../../rna_protein_coupling_PD/rdsData/rawData_filt.rds")
+saveRDS(m_quant, "../../rna_protein_coupling_PD/rdsData/m_quant.rds")
+saveRDS(m_lib, "../../rna_protein_coupling_PD/rdsData/m_lib.rds")
+saveRDS(m_logLib, "../../rna_protein_coupling_PD/rdsData/logLib.rds")
+saveRDS(m_batch, "../../rna_protein_coupling_PD/rdsData/m_batch.rds")
+saveRDS(m_lib_batch, "../../rna_protein_coupling_PD/rdsData/m_lib_batch.rds")
+saveRDS(m_batch_scld, "../../rna_protein_coupling_PD/rdsData/m_batch_scld.rds")
+
+
+saveRDS(info_rna, "../../rna_protein_coupling_PD/rdsData/info_rna.rds")
+info %>% dplyr::select(sample_id, batch, channel, reporter.intensity.id, RNAseq_id, cohort, age_years, sex, PMI, condition1) %>%
+	dplyr::mutate(condition1 = case_when(
+					     condition1 == "Medium" ~ "other",
+					     cohort == "Netherlands Brain Bank" ~ "other",
+					     TRUE ~ condition1)) %>%
+saveRDS(., "../../rna_protein_coupling_PD/rdsData/info.rds")					     
+```
+
+
+

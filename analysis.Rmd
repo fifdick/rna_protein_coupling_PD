@@ -13,6 +13,7 @@ R -e "rmarkdown::render('methods.Rmd')"
 -->
 
 ```{r dependencies}
+library(cowplot)
 library(boot)
 library(mixOmics)
 library(ggbiplot)
@@ -80,6 +81,8 @@ preprocessing.Rmd
 
 ```{r}
 cpmAll <- readRDS("./rdsData/cpmAll.rds")
+cpmAll_pd  <-  readRDS("./rdsData/cpmAll_pd.rds")
+
 rawData_filt <- readRDS("./rdsData/rawData_filt.rds")
 m_quant <- readRDS("./rdsData/m_quant.rds")
 m_lib <- readRDS("./rdsData/m_lib.rds")
@@ -93,6 +96,7 @@ m_batch_scld <- readRDS("./rdsData/m_batch_scld.rds")
 
 info <- readRDS("./rdsData/info.rds")
 info_rna <- readRDS("./rdsData/info_rna.rds")
+info_rna_pd <- readRDS("./rdsData/info_rna_pd.rds")
 ```
 
 ## Protein ~ RNA corrleation and normalization method evaluation
@@ -196,6 +200,191 @@ ggplot(df2, aes(x = value.y , y = value.x)) +
 pdf("./result_figs/Supp/proteomics_qc/SFig2.pdf", width = 8, height = 7)
 p1 / p2
 dev.off()
+```
+```{r}
+```
+
+## Group-wise correlation (rna ~ protein) HA and YG
+```{r}
+```
+
+
+```{r}
+df <- dplyr::left_join(rna_norm, prot_df, by = c("RNAseq_id", "gene_name" = "Gene.names")) %>%
+	na.omit(.)
+df %>% dplyr::group_by(gene_name, condition1) %>%  
+	dplyr::summarize(var_rna = var(value.rna),
+			 var_prot = var(value.batch_scld),
+			 cor_batch_scld = cor(value.rna, value.batch_scld)) %>%
+	reshape2::melt(.) -> df1
+
+remove_g  <-  df1 %>% 
+	dplyr::filter(is.na(value)) %>%
+	dplyr::pull(gene_name)
+
+df1 <- df1 %>% dplyr::filter(!(gene_name %in% remove_g)) %>%
+	dplyr::mutate(condition1 = ifelse(condition1 == "Control", "HA", condition1))
+
+df3 <- df1 %>% dplyr::filter(variable == "cor_batch_scld") 
+df1 %<>% dplyr::mutate(condition1 = relevel(as.factor(condition1), ref = "YG"))
+df3 %<>% dplyr::mutate(condition1 = relevel(as.factor(condition1), ref = "YG"))
+```
+
+#### Figure 3
+
+Figure 3 and save gene_cl dataframe for pathway enrichment analysis 
+(code in pea.Rmd)
+
+```{r}
+df1 %>%  
+	spread(., condition1, value) %>% 
+	dplyr::filter(variable == "var_rna") %>%
+	pull(gene_name) -> bg
+df3 %>%
+	dplyr::filter(gene_name %in% bg) %>%
+	dplyr::select(gene_name, condition1, value) %>%
+	spread(., condition1, value) -> gene_cl 
+ggplot(gene_cl, aes(x = YG, y = HA)) +
+	geom_hline(yintercept = 0, lty = "dashed", size = .3, alpha = .5) + 
+	geom_vline(xintercept = 0, lty = "dashed", size = .3, alpha = .5) + 
+	stat_density_2d(aes(fill = ..level.., alpha = ..level..), geom = "polygon") +
+        scale_fill_viridis_c(option = "magma") +	
+	guides(alpha = F) +
+	scale_x_continuous(limits = c(-1.1, 1.1)) +
+	scale_y_continuous(limits = c(-1.1, 1.1)) +
+	coord_fixed() +
+	cowplot::theme_cowplot() +
+	geom_point(col = "transparent") +
+	labs(tag = "B", x = "rna ~ prot (YG)", y = "rna ~ prot (HA)", fill = "Density level") +
+	guides(fill = guide_legend(override.aes = list(alpha = c(.1,.2,.5,.6,.8, 1)))) -> p3
+p3  <- ggExtra::ggMarginal(p3, type = "densigram", fill = "transparent", size = 7, groupColor = T)
+density_p <- p3 + plot_spacer() 
+pdf("./result_figs/Draft/Figure3_partI.pdf", width = 12, height = 10)
+p1  + p3 + plot_layout(widths = c(1, 2), heights = c(1,2))
+dev.off()
+```
+
+```{r}
+df3 %>% dplyr::group_by(condition1) %>%
+	dplyr::summarize(median(value))
+```
+
+
+Save df to rds for pea analysis in "./pea.Rmd"
+
+```{r}
+saveRDS(gene_cl, file = "./results/rds/gene_cl.rds")
+```
+
+### Add PD samples (PW cohort) 
+
+- Figure 4
+- Create Correlation dataframe 
+
+```{r}
+rna_norm  <- cpmAll_pd %>%
+	dplyr::distinct(gene_name, .keep_all = T) %>%
+	dplyr::filter(gene_name %in% m_batch$Gene.names) %>%
+	dplyr::mutate(med = rowMedians(as.matrix(dplyr::select_if(.,is.numeric))), row_var = rowVars(as.matrix(dplyr::select_if(.,is.numeric)))) %>%  
+	dplyr::filter(med >= quantile(med, probs = c(0.1)) ) %>% # &  med <= quantile(med, probs = c(0.95))) %>%	 
+	dplyr::filter(row_var >= quantile(row_var, probs = 0.15)) %>%
+	dplyr::select(-med,-row_var)  %>%
+	reshape2::melt(.) %>% 
+	dplyr::rename(RNAseq_id = variable, value.rna = value) 
+
+prot_df <- m_batch_scld %>%
+	dplyr::filter_if(is.numeric, all_vars(. != 0)) %>%
+        dplyr::mutate(row_med = rowMedians(as.matrix(dplyr::select(.,info$reporter.intensity.id))), row_var = rowVars(as.matrix(dplyr::select(., info$reporter.intensity.id)))) %>%
+#	dplyr::filter(row_med > quantile(row_med, probs = 0.1), row_med < quantile(row_med, probs = 0.9)) %>%
+#	dplyr::filter( row_var < quantile(row_var, probs = .15)) %>%
+	reshape2::melt(.) %>%
+	dplyr::mutate(value = log2(value + 1)) %>%
+	dplyr::rename(reporter.intensity.id = variable) %>%
+	dplyr::left_join(., info[,c("RNAseq_id","reporter.intensity.id", "condition1")], by = "reporter.intensity.id") %>%
+	dplyr::mutate(value.prot = value) %>%
+	na.omit(.) 
+df_rna_prot_pd <- dplyr::left_join(rna_norm, prot_df, by = c("RNAseq_id", "gene_name" = "Gene.names")) %>%
+	na.omit(.)
+
+df <- dplyr::left_join(rna_norm, prot_df, by = c("RNAseq_id", "gene_name" = "Gene.names")) %>%
+	na.omit(.)
+df %>% dplyr::group_by(gene_name) %>%  
+	dplyr::summarize(cor_batch_scld = cor(value.rna, value.prot)) %>%
+	reshape2::melt(.) -> df1_pd
+df3_pd  <- df1_pd %>% dplyr::mutate(condition1 = "PD")
+df3_all  <- gdata::combine(df3_pd, df3)
+genes <- Reduce(intersect, list(unique(df3$gene_name), unique(df3_pd$gene_name)))
+df3_all %<>% dplyr::filter(gene_name %in% genes)
+```
+Figure 4
+
+```{r}
+ggplot(df3_all, aes(x = condition1, y = value)) +
+	geom_violin(aes(fill = condition1)) +
+#	geom_jitter(alpha = .2, col = "black") +
+	scale_fill_manual(values = c("PD" = cols[["PD"]], "HA" = cols[["HA"]], "YG" = cols[["YG"]])) + 
+	geom_boxplot(width = .2, col = "black", fill = "white") +
+	#facet_wrap(~factor(condition1, levels = c("YG", "HA", "PD")), scales = "free_x") +
+	#scale_x_discrete(limits = c("YG", "HA", "PD")) +
+	theme_bw() +
+	stat_compare_means(comparisons = list(c("YG", "HA"),
+					      c("YG", "PD"),
+					      c("HA", "PD"))) +
+	labs(tag = "A", x = "", y = "r (RNA ~ prot)", fill = "Condition") -> p1
+
+df3_all %>% 
+	dplyr::group_by(condition1) %>%
+	dplyr::summarize(range(value))
+# facet wrap cor plots as B and deltas boxplot as C
+df3_all %>% dplyr::filter(gene_name %in% genes) %>%
+	dplyr::select(-variable, -source) %>%
+	spread(condition1, value) %>%
+	dplyr::mutate(d_ha_yg = abs(YG) - abs(HA), 
+		      d_pd_yg = abs(YG) - abs(PD)) %>%
+	dplyr::select(-HA, -YG, -PD) %>%
+	reshape2::melt(.) -> df3_all_d
+ggplot(df3_all_d, aes(x = variable, y = value, col = variable)) +
+	geom_violin(fill = "transparent") +
+	geom_boxplot(width = .2) +
+	#facet_wrap(~ condition1, scales = "free") +
+	scale_colour_manual(values = c("d_ha_yg" = cols[["HA"]], "d_pd_yg" = cols[["PD"]]),
+			    labels = c("d_ha_yg" = "|HA|", "d_pd_yg" = "|PD|")) +
+#	scale_fill_manual(values = c("d_ha_yg" = cols[["HA"]], "d_pd_yg" = cols[["PD"]]),
+#			  labels = c("d_ha_yg" = "HA", "d_pd_yg" = "PD")) +
+	theme_bw() +
+#	geom_path(aes(group = gene_name), alpha = .2, size = .2, col = "grey") +
+
+	#stat_compare_means(label.sep = " paired,\none sided (d_pd > d_ha),\n", label.x.npc = "middle", paired = T, method.args = list(alternative = "greater"), label.y = 0.6)  +
+	#stat_compare_means(label.sep = " paired, ", label.x.npc = "middle", paired = T, label.y = 0.8) +
+	stat_compare_means(label.x.npc = "middle", paired = T) +
+#	theme(legend.position = "none") +
+#	geom_path(aes(group = gene_name), size = .01, alpha = .01) +
+	labs( x = "Comparison", y = "Delta (Pearson r)", tag = "B", col = "Delta |YG| - ") +
+	scale_x_discrete(labels = c("d_ha_yg" = "|YG| - |HA|", "d_pd_yg"  = "|YG| - |PD|")) -> p2
+p1 + p2
+```
+
+```{r}
+#alternative less -> x is shifted to the left of y
+df3_all_d %>% spread(., variable, value) %>% na.omit(.) -> test.df
+wilcox.test(test.df$d_pd_yg, test.df$d_ha_yg, paired = T, alternative = "less")	
+```
+
+
+#### PD PEA 
+
+Do the same gene scoring to see which pathways are enriched when you age with PD
+
+gene_cl_pd
+
+```{r}
+df3_all %>% dplyr::select(-source, -variable) %>% spread(., condition1, value) -> gene_cl_pd
+```
+
+save df to rds for further analysis in "./analysis_tidy_2.Rmd"
+
+```{r}
+saveRDS(gene_cl_pd, file = "./results/rds/gene_cl_pd.rds")
 ```
 
 
