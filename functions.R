@@ -38,7 +38,7 @@ import_and_filter <- function(files_per_cohort, col_names, tx2gene, gtf_path) {
 # rownames(cts) <- gsub("\\.\\d+", "", rownames(cts))
  txi$counts <- cts
  # add gene symbols to extract neuronal marker genes
- gene_symbols <- DTU::get_gene_info(g_source = "gff", gtf_path = gtf_path) %>% dplyr::select(gene_id, gene_name, gene_type, seqnames)
+ gene_symbols <- get_gene_info(g_source = "gff", gtf_path = gtf_path) %>% dplyr::select(gene_id, gene_name, gene_type, seqnames)
  counts_geneLevel <- as.data.frame(txi$counts)
  counts_geneLevel$gene_id <- rownames(counts_geneLevel)
 # counts_geneLevel <- dplyr::left_join(counts_geneLevel, gene_symbols, by = "gene_id")
@@ -152,7 +152,7 @@ import_and_filter <- function(files_per_cohort, col_names, tx2gene, gtf_path) {
 	}
 get_est_gene_length <- function(files_per_cohort, col_names, tx2gene) {
  txi <- tximport::tximport(files_per_cohort, type = "salmon", tx2gene = tx2gene)
- gene_symbols <- DTU::get_gene_info(id_list = rownames(txi$length), tx = FALSE) %>% dplyr::select(gene_id,gene_name)
+ gene_symbols <- get_gene_info(id_list = rownames(txi$length), tx = FALSE) %>% dplyr::select(gene_id,gene_name)
  print(colnames(txi$counts))
  tx_length <- as.data.frame(txi$length)
  colnames(tx_length)  <- col_names
@@ -162,7 +162,7 @@ get_est_gene_length <- function(files_per_cohort, col_names, tx2gene) {
 }
 get_len_scld_tpm <- function(files_per_cohort, col_names, tx2gene) {
  txi <- tximport::tximport(files_per_cohort, type = "salmon", tx2gene = tx2gene, countsFromAbundance = "lengthScaledTPM" )
- gene_symbols <- DTU::get_gene_info(id_list = rownames(txi$length), tx = FALSE) %>% dplyr::select(gene_id,gene_name)
+ gene_symbols <- get_gene_info(id_list = rownames(txi$length), tx = FALSE) %>% dplyr::select(gene_id,gene_name)
 # print(colnames(txi$counts))
  tx <- as.data.frame(txi$counts)
  colnames(tx)  <- col_names
@@ -301,7 +301,7 @@ if (within_batch == TRUE) {
 
 batch_corr <- function(rawData, info, name_cols = c("Gene.names", "Protein.IDs")) {
  # reporter.intensity.id of all the references of each channel (channel 0, batch 1:10)
- ref_ids <- info %>% dplyr::filter(condition == "Reference") 
+ ref_ids <- info %>% dplyr::filter(condition1 == "Reference") 
  referenceRawCounts <- rawData %>% dplyr::select(ref_ids$reporter.intensity.id, all_of(name_cols))
  # calculate correction factor
  cf <- referenceRawCounts %>% dplyr::mutate(denom = rowSums(.[1:10]) / 10) %>%
@@ -764,4 +764,155 @@ GetAnnoFiles <- function(platform){
     return(Anno_file)
 }
 
+#' create annotation df
+#' 
+#' Create transcript annotation file to map transcripts to genes. Either with ensembldb or read from supplied gtf path. Used gtf file in referenceData dir.
+#' @param version string ensembldb version (just the number). Default=75
+#' @param g_scource character string genome annotation source, ensembldb or ucsc (->gtf file). Remember there were some modifications needed to be done for the gtf file.
+#' @param ntx_filter integer threshold for maximum number of transcripts per gene. Genes with more transcripts will be removed from the annotation 
+#' @return annotation dataframe as required by DRIMSeq in DTU::prep_dtu() to build DRIMSeqData object
+#' @importFrom rlang .data 
+#' @export
+get_annot <- function(version = "86", g_source = "ucsc", gtf_path = NULL, ntx_filter = NULL, strip_version = T) {
+ if (g_source == "ensembldb") {
+  db <- paste0("EnsDb.Hsapiens.v", version)
+  if (!(db %in% rownames(utils::installed.packages()))) {
+   BiocManager::install(db)
+  }
+  if (!("ensembldb" %in% rownames(utils::installed.packages()))) {
+   BiocManager::install("ensembldb")
+  }
+  library(db, character.only = TRUE)
+  # Ensembl mapping between genes and transcripts
+  edb <- get(db)
+  txdb <- as.data.frame(ensembldb::transcriptsBy(edb, by = "gene",
+   columns = c("gene_id", "tx_id", "gene_name", "tx_biotype", "entrezid")))
+  txdb <- subset(txdb, ensembldb::seqnames %in% c(1:22, "X", "Y", "MT") & startsWith(gene_id, "ENSG"))
+  txdb <- txdb[, c("tx_id", "gene_id", "gene_name", "tx_biotype", "entrezid")]
+  names(txdb) <- c("TXNAME", "GENEID", "GENENAME", "BIOTYPE", "ENTREZ")
+  annot <- txdb[, c(2, 1)]
+  tab <- table(annot$GENEID)
+  annot$ntx <- tab[match(annot$GENEID, names(tab))]
+  if (!(is.null(ntx_filter))) {
+   annot <- subset(annot, ntx <= ntx_filter)
+  }
+  cat(crayon::blue("ensembl db obj info"))
+  print(edb)
+  return(annot)
+ }
+ else if (g_source == "ucsc") {
+  if (is.null(gtf_path)) {
+   cat(crayon::blue("you chose to load annotation from ucsc gtf file, you didnt provide a path to your gtf file (e.g. ucsc.hg19.gtf)"))
+   return(NULL)
+  } else {
+   txdb <- GenomicFeatures::makeTxDbFromGFF(gtf_path)
+   #annot <- ensembldb::select(txdb, ensembldb::keys(txdb, "GENEID"), "TXNAME", "GENEID", "GENENAME")
 
+	# Create the tx2gene
+	annot <- mapIds(txdb,
+                  keys=keys(txdb, "GENEID"),
+                  column="TXNAME",
+                  keytype="GENEID",
+                  multiVals="list") %>%
+  	enframe(name="GENEID", value="TXNAME") %>%
+  	unnest(cols=c("TXNAME")) %>%
+  	dplyr::select("GENEID", "TXNAME") %>%
+  	distinct()
+
+      	tab <- table(annot$GENEID)
+   	annot$ntx <- tab[match(annot$GENEID, names(tab))]
+   if (!(is.null(ntx_filter))) {
+    annot <- subset(annot, ntx <= ntx_filter)
+    }
+   if (strip_version == TRUE) {
+   annot %<>% dplyr::mutate(GENEID = gsub("\\.\\d+", "", GENEID),
+			     TXNAME = gsub("\\.\\d+", "", TXNAME))
+   }
+   return(annot)
+  }
+ } else {
+  cat(crayon::blue("The database you want to use does not exist or not offered to be used within this function"))
+  cat(crayon::blue("Will return NULL"))
+  return(NULL)
+ }
+}
+
+
+
+#' Retrieve gene annotation from ensembldb
+#' 
+#' Especially used for making the paper figures. To retrieve transcript biotypes and gene names based on either transcript id or gene id.
+#' @param id_list character vector of ids used to retrieve gene annotation, if tx==T then it must be ensembl transcript ids that are valid in the ensembl release that is specified with the parameter version. Else it must be ensembl gene ids.
+#' @param version string specifying ensembl release version (default is 75 which was used within this analysis, the last of grch37)
+#' @param g_source char string specifing the database used to retrieve annotation (this is now redundant, removed functionality to use ucsc)
+#' @param tx bool specifying whether the vector provided with id_list are transcript (tx==TRUE) or gene ids
+#' @param exons
+#' @param uniprot
+#' @param symbol
+#' @param promoters
+#' @param upBP
+#' @param downBPi
+#' @return dataframe of requested gene annotation.
+#' @importFrom dplyr %>%
+#' @export
+get_gene_info <- function(id_list, version = "86", g_source = "gff", gtf_path = NA, tx = FALSE, exons=F, uniprot = FALSE, symbol = FALSE, promoters = FALSE, upBP=2000, downBP=400) {
+  if(g_source == "gff") {
+	stopifnot(file.exists(gtf_path)) 
+	# Create mapping to gene types
+	gene_names <- rtracklayer::import(gtf_path) %>% as_tibble %>%
+    	dplyr::select(seqnames, gene_id, gene_name, transcript_id, gene_type) %>%
+    	na.omit %>%
+   	distinct(gene_id, .keep_all=TRUE)
+     return(gene_names)
+
+  }
+  if (g_source == "ensembldb") {
+  db <- paste0("EnsDb.Hsapiens.v", version)   
+  if (!(db %in% rownames(utils::installed.packages()))) {
+   BiocManager::install(db)
+  }
+  if (!("ensembldb" %in% rownames(utils::installed.packages()))) {
+   BiocManager::install("ensembldb") 
+  }
+  #not sure how to solve the porblem of having a library call in here
+  library(db, character.only = TRUE)
+  # Ensembl mapping between genes and transcripts
+  edb <- get(db)
+  if (symbol == TRUE) {
+   print("Using GeneNameFilter")
+   genes <- as.data.frame(ensembldb::genes(edb, filter = AnnotationFilter::GeneNameFilter(id_list), columns = c("gene_id", "gene_name", "gene_biotype", "entrezid")))
+   return(genes)
+  }
+  if (tx == FALSE) {
+   genes_gr <- ensembldb::genes(edb, filter = AnnotationFilter::GeneIdFilter(id_list), columns = c("gene_id", "gene_name", "gene_biotype", "entrezid"))
+   genes <- as.data.frame(genes_gr)
+   genes <- subset(genes, seqnames %in% c(1:22, "X", "Y", "MT") & startsWith(gene_id, "ENSG"))
+   if (promoters == TRUE) {
+    return(promoters(genes_gr, upstream = upBP, downstream = downBP))	
+   } else {
+    return(genes)
+   }
+  } else {
+   if (exons == FALSE) {
+    if (uniprot == TRUE) {
+     txdb <- as.data.frame(ensembldb::transcriptsBy(edb, by = "gene", filter = AnnotationFilter::TxIdFilter(id_list), columns = c("gene_id", "tx_id", "gene_name", "tx_biotype", "entrezid", "tx_name", "protein_id", "uniprot_id")))
+     txdb <- txdb %>% dplyr::group_by(.data$tx_id) %>% dplyr::mutate(uniprotID = as.character(paste(.data$uniprot_id, collapse = ","))) %>% dplyr::select(-c(.data$uniprot_id, .data$entrezid)) %>% dplyr::distinct()
+    } else {
+     txdb <- as.data.frame(ensembldb::transcriptsBy(edb, by = "gene", filter = AnnotationFilter::TxIdFilter(id_list), columns = c("gene_id", "tx_id", "gene_name", "tx_biotype", "entrezid", "tx_name")))
+    }
+    txdb <- subset(txdb, seqnames %in% c(1:22, "X", "Y", "MT") & startsWith(gene_id, "ENSG"))
+    tab <- table(txdb$gene_id)
+    txdb$ntx <- tab[match(txdb$gene_id, names(tab))]
+   } else {
+    if (!(tx == TRUE)) {
+     print("please enter tx_ids and put tx==T to get exons as they are retrieved from ensembldb by tx_id")
+    } else {
+     txdb <- as.data.frame(ensembldb::exonsBy(edb, by = "tx", filter = AnnotationFilter::TxIdFilter(id_list), columns = c("gene_id", "tx_id", "gene_name", "tx_biotype", "exon_id", "exon_idx", "exon_seq_start", "exon_seq_end", "seq_strand")))
+     txdb <- subset(txdb, seqnames %in% c(1:22, "X", "Y", "MT") & startsWith(gene_id, "ENSG"))
+     txdb <- txdb %>% dplyr::group_by(.data$tx_id)
+    }    
+   }
+   return(txdb)
+  }
+ }
+}

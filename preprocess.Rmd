@@ -1,3 +1,81 @@
+---
+title: "(Post-)Preprocessing of proteomics and RNA"
+author: "Fiona Dick"
+date: "`r Sys.Date()`"
+output: html_document
+	toc: true
+runtime: shiny
+---
+
+```{r}
+library(boot)
+library(mixOmics)
+library(ggbiplot)
+library(tibble)
+library(ermineR)
+library(ggpubr)
+library("DESeq2")
+require("ggplot2")
+require("kableExtra")
+#install.packages("devtools")
+#devtools::install_github("rlbarter/superheat")
+#library(superheat)
+require("ggfortify")
+require("readxl")
+#library(PathCluster)
+require("magrittr")
+require("gridExtra")
+#library("shinythemes")
+library("dbscan")
+require("proteus")
+require("dplyr")
+require("tidyr")
+require("preprocessCore")         
+require("readr")
+require("knitr")
+require("kableExtra")
+require("ggpubr")
+require("stringr")
+require("pheatmap")
+require("RColorBrewer")
+require("ggrepel")
+require("patchwork")
+require("ggplotify")
+library("magrittr")
+library("DRIMSeq")
+library("DEXSeq")
+library("DTU")
+library(ComplexHeatmap)
+library(viridis)
+library(reshape2)
+library(markerGeneProfile)
+library("homologene")
+library("markerGeneProfile")
+data("mouseMarkerGenesCombined")
+```
+
+##  Utils
+
+```{r}
+source("./functions.R")
+```
+
+```{r}
+cols <- c("#ef476f", "#073b4c", "#118ab2", "#06d6a0", "#84a59d")
+names(cols) <- c("PD", "HA", "Other", "YG", "Reference") 
+```
+
+
+## Paths
+
+```{r}
+# RNA
+gtfPath  <- "./referenceData/gencode.v32.annotation.gtf"
+#remember to uncompress before using
+salmonPath  <- "./salmonOut"
+```
+
+
 ## Read metadata
 
 ```{r}
@@ -121,7 +199,7 @@ dev.off()
 ```{r gene-levelCPM}
 # gene-level counts
 # create gene-tx annotation from ucsc hg19 gtf
-annot_general <- DTU::get_annot("86", gtf_path = gtfPath, strip_version = F)
+annot_general <- get_annot("86", gtf_path = gtfPath, strip_version = F)
 tx2gene <- annot_general[,c(2,1)]
 colnames(tx2gene) <- c("tx","gene")
 # salmon raw data dirs
@@ -142,8 +220,8 @@ Raw RNA from salmon Dirs and sample ids from RNASeq experiment info file
 cpmAll_pd
 
 ```{r}
-# Included PD in the study
-annot_general <- DTU::get_annot("86", gtf_path = gtfPath, strip_version = F)
+# Included  the study
+annot_general <- get_annot("86", gtf_path = gtfPath, strip_version = F)
 tx2gene <- annot_general[,c(2,1)]
 colnames(tx2gene) <- c("tx","gene")
 # salmon raw data dirs
@@ -165,15 +243,6 @@ saveRDS(m_logLib, "../../rna_protein_coupling_PD/rdsData/logLib.rds")
 saveRDS(m_batch, "../../rna_protein_coupling_PD/rdsData/m_batch.rds")
 saveRDS(m_lib_batch, "../../rna_protein_coupling_PD/rdsData/m_lib_batch.rds")
 saveRDS(m_batch_scld, "../../rna_protein_coupling_PD/rdsData/m_batch_scld.rds")
-
-
-saveRDS(info_rna, "../../rna_protein_coupling_PD/rdsData/info_rna.rds")
-info %>% dplyr::select(sample_id, batch, channel, reporter.intensity.id, RNAseq_id, cohort, age_years, sex, PMI, condition1) %>%
-	dplyr::mutate(condition1 = case_when(
-					     condition1 == "Medium" ~ "other",
-					     cohort == "Netherlands Brain Bank" ~ "other",
-					     TRUE ~ condition1)) %>%
-saveRDS(., "../../rna_protein_coupling_PD/rdsData/info.rds")					     
 ```
 
 

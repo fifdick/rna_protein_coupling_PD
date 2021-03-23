@@ -60,10 +60,9 @@ library("markerGeneProfile")
 data("mouseMarkerGenesCombined")
 ```
 
-
 ```{r}
-cols <- c("#ef476f", "#073b4c", "#118ab2", "#06d6a0", "#ffd166", "#84a59d")
-names(cols) <- c("PD", "HA", "Medium", "YG", "empty", "Reference") 
+cols <- c("#ef476f", "#073b4c", "#118ab2", "#06d6a0", "#84a59d")
+names(cols) <- c("PD", "HA", "Other", "YG", "Reference") 
 ```
 
 ```{r}
@@ -80,9 +79,11 @@ preprocessing.Rmd
 
 
 ```{r}
+#RNA
 cpmAll <- readRDS("./rdsData/cpmAll.rds")
 cpmAll_pd  <-  readRDS("./rdsData/cpmAll_pd.rds")
 
+#Proteomics
 rawData_filt <- readRDS("./rdsData/rawData_filt.rds")
 m_quant <- readRDS("./rdsData/m_quant.rds")
 m_lib <- readRDS("./rdsData/m_lib.rds")
