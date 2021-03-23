@@ -325,11 +325,11 @@ batch_corr <- function(rawData, info, name_cols = c("Gene.names", "Protein.IDs")
 		 	 ifelse((is.infinite(./cf_val) | is.nan(./cf_val)),.,(./cf_val))				
 		#	. / (1 + cf_val)
 	})) -> normCN 
- print(apply(cf,2,function(x)(sum(is.infinite(x)))))
- p <- ggplot(reshape2::melt(cf), aes(x = value)) + 
-	geom_histogram() +
-	facet_wrap(~ variable, scales = "free")
- ggsave(plot = p, filename = "./cf_dist.pdf", device = "pdf")
+# print(apply(cf,2,function(x)(sum(is.infinite(x)))))
+ #p <- ggplot(reshape2::melt(cf), aes(x = value)) + 
+#	geom_histogram() +
+#	facet_wrap(~ variable, scales = "free")
+# ggsave(plot = p, filename = "./cf_dist.pdf", device = "pdf")
  return(normCN)
 }
 

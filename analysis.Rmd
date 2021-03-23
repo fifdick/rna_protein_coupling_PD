@@ -182,10 +182,7 @@ ggplot(df1, aes(x = variable, y = value)) +
 	scale_x_discrete(labels = c("cor_quant" = "Quantile norm.", "cor_raw" = "Raw Data", "cor_batch_scld" = "Batch correction")) -> p1 
 
 df %>% dplyr::group_by(gene_name) %>%
-	dplyr::summarize(# med_batch = median(value.batch),
-			 med_quant = median(value.quant),
-			 #med_lib   = median(value.lib),
-			 #med_logLib = median(value.logLib),
+	dplyr::summarize(med_quant = median(value.quant),
 			 med_raw = median(value.raw),
 			 med_batch_scld = median(value.batch_scld),
 			 med_rna = median(value.rna)) %>%
@@ -202,13 +199,8 @@ pdf("./result_figs/Supp/proteomics_qc/SFig2.pdf", width = 8, height = 7)
 p1 / p2
 dev.off()
 ```
-```{r}
-```
 
 ## Group-wise correlation (rna ~ protein) HA and YG
-```{r}
-```
-
 
 ```{r}
 df <- dplyr::left_join(rna_norm, prot_df, by = c("RNAseq_id", "gene_name" = "Gene.names")) %>%
@@ -237,6 +229,18 @@ Figure 3 and save gene_cl dataframe for pathway enrichment analysis
 (code in pea.Rmd)
 
 ```{r}
+ggplot(df3, aes(x = condition1, y = value)) +
+	geom_violin() +
+	geom_boxplot(aes(fill = condition1), col = "black", width = 0.2) +
+#	geom_jitter(aes(col = condition1), size = .3, alpha = .1) +
+	theme_cowplot() +
+	stat_compare_means(label.x.npc = "middle" ) +
+	scale_x_discrete(limits = c("YG", "HA")) +
+	theme(legend.position = "bottom") +
+	#	scale_y_continuous(limits = c(-1, 1)) +
+	scale_fill_manual(values = c("YG" = cols[["YG"]], "HA" = cols[["HA"]])) +
+	labs(x = "Condition", y = "Pearson R (rna ~ prot)", fill = "Condition", tag = "A") -> p1
+
 df1 %>%  
 	spread(., condition1, value) %>% 
 	dplyr::filter(variable == "var_rna") %>%
@@ -296,8 +300,6 @@ rna_norm  <- cpmAll_pd %>%
 prot_df <- m_batch_scld %>%
 	dplyr::filter_if(is.numeric, all_vars(. != 0)) %>%
         dplyr::mutate(row_med = rowMedians(as.matrix(dplyr::select(.,info$reporter.intensity.id))), row_var = rowVars(as.matrix(dplyr::select(., info$reporter.intensity.id)))) %>%
-#	dplyr::filter(row_med > quantile(row_med, probs = 0.1), row_med < quantile(row_med, probs = 0.9)) %>%
-#	dplyr::filter( row_var < quantile(row_var, probs = .15)) %>%
 	reshape2::melt(.) %>%
 	dplyr::mutate(value = log2(value + 1)) %>%
 	dplyr::rename(reporter.intensity.id = variable) %>%
@@ -347,22 +349,12 @@ df3_all %>% dplyr::filter(gene_name %in% genes) %>%
 ggplot(df3_all_d, aes(x = variable, y = value, col = variable)) +
 	geom_violin(fill = "transparent") +
 	geom_boxplot(width = .2) +
-	#facet_wrap(~ condition1, scales = "free") +
 	scale_colour_manual(values = c("d_ha_yg" = cols[["HA"]], "d_pd_yg" = cols[["PD"]]),
 			    labels = c("d_ha_yg" = "|HA|", "d_pd_yg" = "|PD|")) +
-#	scale_fill_manual(values = c("d_ha_yg" = cols[["HA"]], "d_pd_yg" = cols[["PD"]]),
-#			  labels = c("d_ha_yg" = "HA", "d_pd_yg" = "PD")) +
 	theme_bw() +
-#	geom_path(aes(group = gene_name), alpha = .2, size = .2, col = "grey") +
-
-	#stat_compare_means(label.sep = " paired,\none sided (d_pd > d_ha),\n", label.x.npc = "middle", paired = T, method.args = list(alternative = "greater"), label.y = 0.6)  +
-	#stat_compare_means(label.sep = " paired, ", label.x.npc = "middle", paired = T, label.y = 0.8) +
 	stat_compare_means(label.x.npc = "middle", paired = T) +
-#	theme(legend.position = "none") +
-#	geom_path(aes(group = gene_name), size = .01, alpha = .01) +
 	labs( x = "Comparison", y = "Delta (Pearson r)", tag = "B", col = "Delta |YG| - ") +
 	scale_x_discrete(labels = c("d_ha_yg" = "|YG| - |HA|", "d_pd_yg"  = "|YG| - |PD|")) -> p2
-p1 + p2
 ```
 
 ```{r}
@@ -370,11 +362,6 @@ p1 + p2
 df3_all_d %>% spread(., variable, value) %>% na.omit(.) -> test.df
 wilcox.test(test.df$d_pd_yg, test.df$d_ha_yg, paired = T, alternative = "less")	
 ```
-
-
-#### PD PEA 
-
-Do the same gene scoring to see which pathways are enriched when you age with PD
 
 gene_cl_pd
 
@@ -386,6 +373,325 @@ save df to rds for further analysis in "./analysis_tidy_2.Rmd"
 
 ```{r}
 saveRDS(gene_cl_pd, file = "./results/rds/gene_cl_pd.rds")
+```
+
+Delta Delta plot to identify genes that decoupled different in PD ageing
+
+```{r}
+melt(gene_cl_pd, id.vars =c("gene_name", "YG")) %>%
+	dplyr::mutate(new_var_name = ifelse(variable == "HA", "YG vs HA", "YG vs PD"))-> b
+ggplot(b, aes(x = YG, y = value))  +
+stat_density_2d(aes (col = new_var_name)) +
+scale_colour_manual(values = c("YG vs PD" = cols[["PD"]], "YG vs HA" = cols[["HA"]])) +
+scale_fill_manual(values = c("YG vs PD" = cols[["PD"]], "YG vs HA" = cols[["HA"]])) +
+geom_point(size = .2, aes( col = new_var_name)) +
+geom_vline(xintercept = 0) +
+scale_x_continuous(limits = c(-1.1, 1.1)) +
+scale_y_continuous(limits = c(-1.1, 1.1)) +
+geom_hline(yintercept = 0) +
+facet_wrap(~new_var_name) +
+coord_fixed() +
+labs(x = "rna ~ protein (YG)", y = "rna ~ protein (Age)", col = "Case condition", alpha = "Density") +
+cowplot::theme_cowplot() +
+theme(legend.position = "bottom") -> ps3
+pdf("./result_figs/Supp/S3F.pdf", width = 8, height = 7)
+ps3
+dev.off()
+```
+
+```{r}
+df3_all_d %>%
+	spread(variable, value) -> p4_df
+ggplot(p4_df, aes(x = d_ha_yg, y = d_pd_yg)) +
+	ggpointdensity::geom_pointdensity() +
+	geom_abline(intercept = 0, slope = 1, col = "black") +
+	geom_vline(xintercept = 0, lty = "dashed", alpha = .7, col = "grey") +
+	geom_hline(yintercept = 0, lty = "dashed", alpha = .7, col = "grey") +
+	geom_smooth(method = "lm") +	
+	ggpubr::stat_regline_equation(label.x = -0.7, label.y = 0.7, col = "blue") +
+  	theme(legend.position = "bottom") +	
+	cowplot::theme_cowplot() +
+	geom_rug(col = "grey", size = .2, alpha = .5) +
+	coord_fixed() +
+	scale_color_viridis(option = "magma") +
+	stat_cor() +
+	labs(tag = "C", x = "|YG| - |HA|", y = "|YG| - |PD|", col = "Density") -> p3
+
+y <- p4_df$d_pd_yg 
+y_hat <- 0 + 1 * p4_df$d_ha_yg 
+res_diag <- y_hat - y
+fit  <- lm(d_pd_yg ~ d_ha_yg, data = df3_all_d %>%
+	spread(variable, value))
+ggplot(data.frame(value = resid(fit)), aes(x = "Residuals", y = value)) +
+	geom_violin() +
+	geom_boxplot(width = 0.2) +
+	cowplot::theme_cowplot() +
+	labs(tag = "E", x = "", y = "Value") -> p5
+
+t.test(resid(fit))
+
+gene_cl_pd %>% 
+	ggplot(., aes(x = HA, y = PD)) +
+	geom_hline(yintercept = 0, lty = "dashed", size = .3, alpha = .5) + 
+	geom_vline(xintercept = 0, lty = "dashed", size = .3, alpha = .5) + 
+	stat_density_2d(contour_var = "ndensity", aes(fill = ..level.., alpha = ..level..), geom = "polygon") +
+        scale_fill_viridis_c(option = "magma") +	
+	guides(alpha = F) +
+	scale_x_continuous(limits = c(-1.1, 1.1)) +
+	scale_y_continuous(limits = c(-1.1, 1.1)) +
+	coord_fixed() +
+	cowplot::theme_cowplot() +
+	geom_point(col = "transparent") +
+	labs(tag = "D", x = "rna ~ prot (HA)", y = "rna ~ prot (PD)", fill = "Density level") -> p4 
+pdf("./result_figs/Draft/Figure4.pdf", width = 12, height = 10)
+(p1|p2) / ((p3) + p4)
+dev.off()
+```
+
+stats
+
+```{r}
+sum(!gene_cl$gene_name %in% gene_cl_pd$gene_name)
+sum(!gene_cl_pd$gene_name %in% gene_cl$gene_name)
+
+
+#remember adding pd reduces the number of genes,
+#thats why the medians, vars and ranges for HA and YG also slightly change
+gene_cl_pd %>% 
+	reshape2::melt(.) %>%
+	group_by(variable) %>%
+	dplyr::summarize(range(value), var(value), median(value))
+gene_cl %>% 
+	reshape2::melt(.) %>%
+	group_by(variable) %>%
+	dplyr::summarize(range(value), var(value), median(value))
+```
+
+
+## sPLS (HA, YG)
+
+
+Extracts from the mixOmics vignette
+
+"I would like to integrate two data sets measured on the same samples by extracting correlated information, or by highlighing commonalities between data sets."
+"Unlike PCA which maximizes the variance of components from a single data set, PLS maximizes the covariance between components from two data sets"
+"In PLS, linear combination of variables are called latent variables or latent components."
+PLS has been recently developed by our team to perform simultaneous variable selection in both data sets X and Y data sets, by including LASSO ℓ1 penalizations in PLS on each pair of loading vectors (Lê Cao et al. 2008).
+ "Loading vectors are obtained so that the covariance between a linear combination of the variables from X (the X-component) and from Y (the Y-component) is maximised."
+"The covariance is sometimes called a measure of "linear dependence" between the two random variables. That does not mean the same thing as in the context of linear algebra (see linear dependence). When the covariance is normalized, one obtains the Pearson correlation coefficient, which gives the goodness of the fit for the best possible linear function that describes the relation between the variables. In this sense, covariance is a linear gauge of dependence.
+"
+"Covariance is when two variables vary with each other, whereas Correlation is when the change in one variable results in the change in another variable.
+The upper and lower limits for the covariance depend on the variances of the variables involved. These variances, in turn, can vary with the scaling of the variables. Even a change in the units of measurement can change the covariance. Thus, covariance is only useful to find the direction of the relationship between two variables and not the magnitude. B"
+
+```{r}
+rna_id  <- colnames(cpmAll)[-c(1,2)]
+prot_id  <- colnames(m_batch)[-c(1,2)]
+sample_ids <- dplyr::left_join(data.frame(RNAseq_id = rna_id), 
+			       (info %>%
+				       dplyr::select(condition1, RNAseq_id, reporter.intensity.id, age_years, sex, PMI)),
+		by = "RNAseq_id") 
+X  <- cpmAll %>% dplyr::select(all_of(sample_ids$RNAseq_id))
+rownames(X)  <- cpmAll$gene_name
+Y  <- m_batch_scld %>% dplyr::distinct(Gene.names, .keep_all = T) %>%
+	dplyr::select(Gene.names, all_of(sample_ids$reporter.intensity.id))
+rownames(Y)  <- Y$Gene.names
+Y %<>% dplyr::select(-Gene.names)
+
+#Tune to find optioal number of vars to keep
+set.seed(1)
+res <- spls(t(X),t(Y), keepX  = c(50, 50), keepY = c(50,50), scale = T, ncomp = 2, mode = "canonical" )
+#
+
+
+A <- plotArrow(res, group = as.factor(sample_ids$condition1),
+          X.label = 'PLS comp 1', Y.label = 'PLS comp 2')
+
+
+#I didnt like their plotting function so here is some ugly code to extract the data and plot with ggplot
+
+A %>%
+	dplyr::mutate(sample_id = c(rownames(A)[1:15], rownames(A)[1:15])) %>% 
+	dplyr::rename(dataset = Block, condition1 = group) %>%
+	dplyr::mutate(dataset = ifelse(dataset == "Block: X", "RNA", "Protein")) %>%
+ggplot(., aes(x = x, y = y, col = condition1, shape = dataset)) +
+	geom_point(size = 2) +
+	scale_shape_manual(values = c(15, 19), labels = c("RNA" = "RNA (X)", "Protein" = "Protein (Y)")) +
+	geom_path(aes(group = sample_id)) +
+	scale_color_manual(values = c(cols[["HA"]], "YG" = cols[["YG"]])) +
+	theme_cowplot() +
+	theme(legend.position = "right") +
+	labs(tag = "B", pch = "Data source", col = "Condition", x = "Component 1", y = "Component 2") -> p2
+
+
+p2
+
+B <- plotIndiv(res, rep.space= 'XY-variate',group = sample_ids$age_year, pch = as.factor(sample_ids$condition1), comp = c(1,2))
+
+# Age < 0, is inaccurate, I just wanted to highlight the sample from the YG
+# which was born approx. 2 weeks before est. date of birth
+
+B$df %<>% 
+	dplyr::mutate(group  = as.numeric(as.character(group)),
+		      binned_age = case_when(
+					     group < 0 ~ "        Age <   0",
+					     group > 0 & group < 1 ~ "  0 < Age <   1",
+					     group > 60 & group < 70 ~ "60 < Age < 70",
+					     TRUE ~ "78 < Age < 89"))
+p1 <- ggplot(B$df, aes(x = x, y = y)) +
+#	stat_ellipse(aes(group = as.factor(pch), col = pch)) + 
+	scale_color_manual(name = "Condition", values = c("HA" = cols[["HA"]], "YG" = cols[["YG"]]), guide = F ) +
+	ggnewscale::new_scale_color() +
+	geom_point(aes(col = binned_age), size = 1.5) +
+	scale_color_manual(values = c("springgreen4", "steelblue3", "orange", "purple")) +
+			theme_cowplot() +
+	labs(x = "XY-variate1", y = "XY-variate2", tag = "A", col = "Age (years)") +
+	theme(legend.position = "right",
+		plot.margin = margin(t = 2, r = 0, l = 0, b = 0)) 
+p1 + p2
+p3 <- as.ggplot(~mixOmics::cim(res, color = viridis(n = 1000), comp = 1:2, threshold = 0.2, transpose = T)) + theme(legend.position = "none")
+p3 <-  p3 + labs(tag = "C") + theme(plot.margin = margin(t = 15, r = 0, b = 15, l = 0, unit = "pt"))
+p1
+(p1 + p2)  + plot_layout(widths = c(1.5, 1)) -> p_spls
+pdf("./result_figs/Draft/Figure2.pdf",  height = 10, width = 10)
+p_spls /  plot_spacer() + p3 + plot_layout(heights = c(1, 0.1, 1.5)) 
+dev.off()
+```
+
+## Manuscript numbers
+
+```{r}
+cor.test(B$df$x, sample_ids$age_years)
+B$df %>% dplyr::filter(pch  != "HA") %>%
+	dplyr::mutate(RNAseq_id = rownames(.)) %>%
+	dplyr::left_join(., sample_ids) -> B_HA
+cor.test(B_HA$x, B_HA$age_years)
+summary(cluster::silhouette(as.numeric(B$df$pch), dist(B$df %>% dplyr::select(x, y))))
+
+#combined space variates
+(res$variates$X + res$variates$Y)/2 
+```
+
+```{r}
+nrow(cpmAll)
+nrow(cpmAll_pd)
+nrow(m_batch_scld)
+nrow(gene_cl_pd)
+nrow(gene_cl)
+```
+
+```{r}
+rbind((info_rna$Norway %>% dplyr::select(condition, DV200_score)),
+      	info_rna_pd %>% dplyr::select(condition, DV200_score)) %>% 
+	dplyr::mutate(condition = case_when(
+					    condition == 0 ~ "HA",
+					    condition == 1 ~ "YG",
+					    condition == "Case" ~ "PD")) -> test.dv
+wilcox.test(x = test.dv %>% dplyr::filter(condition == "HA") %>%
+	    dplyr::pull(DV200_score),
+	    y = test.dv %>%
+		    dplyr::filter(condition == "YG") %>%
+		dplyr::pull(DV200_score))
+wilcox.test(x = test.dv %>% dplyr::filter(condition == "HA") %>%
+	    dplyr::pull(DV200_score),
+	    y = test.dv %>%
+		    dplyr::filter(condition == "PD") %>%
+		dplyr::pull(DV200_score))
+wilcox.test(x = test.dv %>% dplyr::filter(condition == "YG") %>%
+	    dplyr::pull(DV200_score),
+	    y = test.dv %>%
+		    dplyr::filter(condition == "PD") %>%
+		dplyr::pull(DV200_score))
+
+test.dv %>% dplyr::group_by(condition) %>%
+	dplyr::summarize(var = var(DV200_score), med = median(DV200_score))
+```
+
+## Some functions to plot expression values
+
+Because of lack of functioning cell type marker genes for group YG adn for the proteomics,
+we cannot really test differential expression between groups, the plots are just to get an idea.
+
+```{r}
+show_expression_rel <- function(gene) {
+df_rna_prot %>%
+	dplyr::rename(value.prot = value.batch_scld) %>%
+	dplyr::select(gene_id, gene_name, RNAseq_id, value.rna, Protein.IDs, reporter.intensity.id, condition1, value.prot) %>%
+	dplyr::bind_rows(., df_rna_prot_pd) %>%
+		dplyr::filter(gene_name == gene) %>%
+		dplyr::left_join(., info, by = c("reporter.intensity.id", "condition1", "RNAseq_id")) %>%
+		dplyr::mutate(condition1 = ifelse(condition1 == "Control", "HA", condition1)) %>% 
+ggplot(., aes(x = value.rna, y = value.prot, group = condition1)) +
+geom_point(aes(col = as.factor(age_years))) +
+scale_color_viridis_d(option = "plasma", name = "Age") +
+ggnewscale::new_scale_color() +
+#stat_ellipse(aes(group = condition1, col = condition1)) +
+geom_smooth(method = "lm", col = "black", se = F, size = .5, alpha = .7) +
+stat_cor(aes(col = condition1), method = "pearson") +
+scale_color_manual(values = cols, name = "Condition") +
+cowplot::theme_cowplot() +
+facet_wrap(~factor(condition1, levels = c("YG", "HA", "PD")), nrow = 3 , scales = "free") +
+labs(x = "mRNA level (CPM)", y = "Protein intensity")
+}
+```
+
+```{r}
+show_expression_boxp <- function(genes, title = "") {
+df_rna_prot %>%
+	dplyr::rename(value.prot = value.batch_scld) %>%
+	dplyr::select(gene_id, gene_name, RNAseq_id, value.rna, Protein.IDs, reporter.intensity.id, condition1, value.prot) %>%
+	dplyr::bind_rows(., df_rna_prot_pd) %>%
+		dplyr::filter(gene_name %in% gene_cl_pd$gene_name, gene_name %in% genes) %>%
+		dplyr::left_join(., info, by = c("reporter.intensity.id", "condition1", "RNAseq_id")) %>%
+		dplyr::select(Protein.IDs, gene_id, gene_name, age_years, value.prot, value.rna, condition1) %>%
+		melt(., id.vars = c("Protein.IDs", "gene_id", "gene_name", "condition1", "age_years")) %>% 
+	dplyr::mutate(condition1 = ifelse(condition1 == "Control", "HA", condition1)) %>% 
+ggplot(., aes(x = condition1, y = value)) +
+geom_violin(fill = "transparent") +
+geom_boxplot(width = .1, aes(fill = condition1), outlier.shape = NA) + 
+stat_compare_means(method = "t.test", label = "p.signif", comparisons = list(c("HA", "PD"), c("YG", "HA"), c("YG", "PD"))) +
+scale_fill_manual(values = cols, name = "Condition") +
+cowplot::theme_cowplot() +
+facet_grid(rows=vars(variable), cols= vars(gene_name), scales = "free") +
+labs(x = "Condition", y = "Abundance", title = title)
+}
+```
+
+Notes
+We cannot trust a single correlation of a gene, sample sizes are too small
+and things like this can happen:
+(therefore we do pathway enrichment analysis and look at patterns instead of the correlation coefficient of a single gene)
+
+```{r}
+# Means
+m1 <- 5
+m2 <- 10
+# variance
+s1 <- 5
+s2 <- 1
+# Correlations
+X1 <- 0
+set.seed(123)
+dat <- MASS::mvrnorm(20, mu = c(m1, m2),
+               Sigma = matrix(c(s1, X1,
+                                X1, s2),
+                              ncol = 2, byrow = TRUE),
+               empirical = TRUE)
+colnames(dat)  <- c("X", "Y")
+a <- ggplot(dat, aes(x = X, y = Y)) +
+	geom_point() +
+	stat_cor() +
+	cowplot::theme_cowplot() +
+	geom_smooth(method = "lm") 
+dat <- rbind(dat, data.frame(X = c(20), Y = c(20))) %>%
+	dplyr::mutate(Outlier = ifelse(X == Y, "yes", "no")) 
+b <- ggplot(dat, aes(x = X, y = Y)) +
+	geom_point(aes(col = Outlier)) +
+	scale_color_manual(values = c("yes" = "red", "no" = "black")) +
+	stat_cor() +
+	cowplot::theme_cowplot() +
+	geom_smooth(method = "lm") 
+
+a + b
 ```
 
 
