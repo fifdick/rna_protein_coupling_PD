@@ -1,0 +1,2 @@
+ID	CorrectedPvalue	Name	GeneMembers	NumGenes
+GO:1900046	0.04858667	regulation of hemostasis	ABAT|ANXA5|APOE|CD9|DMTN|F3|PRDX2|PRKCA|	8

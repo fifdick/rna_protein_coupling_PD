@@ -1,0 +1,645 @@
+---
+title: "Pathway enrichment analysis"
+author: Fiona Dick
+output:
+  html_document:
+    fig_width: 10
+    fig_height: 5
+    toc: true
+    toc_depth: 6
+    toc_float: true
+    self_contained: true
+---
+
+```{r echo = F}
+#set JAVA_HOME correctly for ermineR (ermineJ wrapper) to work
+#Sys.setenv(JAVA_HOME = "/usr/lib/jvm/java-1.11.0-openjdk-amd64/")
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(viridis)
+library(ComplexHeatmap)
+library(patchwork)
+library(ermineR)
+library(igraph)
+library(dendextend)
+library(colormap)
+library(kableExtra)
+library("xlsx")
+library(colorspace)
+library(dplyr)
+library(RColorBrewer)
+```
+
+
+```{r echo = F}
+knitr::opts_chunk$set(message = F, warning = F, cache.extra = set.seed(1))
+gene_cl <- readRDS("./results/rds/gene_cl.rds")
+gene_cl_pd <- readRDS("./results/rds/gene_cl_pd.rds")
+out <- "./result_figs/pea/"
+source("./functions.R")
+```
+
+Seed was set (set.seed(1)) in the knitr options to ensure reproducability for all chunks. Random numer generator should result in:
+- 94712531068
+
+```{r}
+sample(10)
+```
+
+```{r}
+cols <- c("#ef476f", "#073b4c", "#118ab2", "#06d6a0", "#84a59d")
+names(cols) <- c("PD", "HA", "Other", "YG", "Reference") 
+```
+
+```{r}
+gsr_annot <- GetAnnoFiles("Generic_human")
+```
+
+# Generate gene scorings for all questions
+
+We want to compare:  
+
+1) YG and HA to identify biological functions and processes that show a change in coupling patterns in normal ageing  
+2) YG and PD to identify biological functions and processes that show a change in coupling patterns in ageing with PD
+3) Explicitly PD and HA to identify biological functions and processes that show altered coupling patterns in PD
+
+For each comparison we are intrested in the following questions:
+
+a) Which genes decouple compared to the reference
+b) Which genes become inversely correlated compared to the reference 
+c) Which genes show an increase in positive correlation compared to the reference
+
+
+For each of these question we create a sorted list of genes and perform functional gene set enrichment analysis and test for enrichement of GO pathways in the high ranking genes. 
+
+For question $i \in {1, 2, 3}$ we calculate $S_{a}^{i}$, $S_{b}^{i}$ and $S_{c}^{i}$:
+$$
+\begin{equation}
+  R_{ref}=\begin{cases}
+    R_{YG}, & \text{for i} \in {1, 2}\\
+    R_{HA}, & \text{for i = 3}
+     \end{cases}
+\end{equation} $$
+
+$$
+\begin{equation}
+  R_{ageing}=\begin{cases}
+       R_{PD}, & \text{for i} \in {2,3}\\
+	R_{HA}, & \text{for i = 2}
+  \end{cases}
+\end{equation} $$
+$$\begin{align}
+\forall R_{ref} > 0\\
+	S_{a}^{i} &= -|R_{ageing}| + R_{ref}\\
+	S_{b}^{i} &= -R_{ageing} + t(R_{ref})\\ 
+	S_{c}^{i} &= R_{ageing} - t(R_{ref}),\\
+	\textit{with} \ t(x) = \frac{x + 1}{2}
+\end{align}$$
+
+To investigate differences in results between two comparisons $i$ and $j$, we rank genes according to the delta $\delta$ in each of the three questions:  
+$$\begin{align}
+\forall R_{YG} > 0\\
+\delta S_{a} &= -S^{i}_{a} +  S^{j}_{a} \\
+\delta S_{b} &= -S^{i}_{b} +  S^{j}_{b} \\
+\delta S_{c} &= -S^{i}_{c} +  S^{j}_{c}
+\end{align}
+$$
+
+
+```{r, echo = F}
+trans <- function(x)
+{	
+	(x+1)/2
+}
+```
+
+```{r echo = F}
+score_map <- function(df, score_name, ref, ageing, outdir = out){
+	df %<>% 
+		dplyr::filter(!is.na(!!as.symbol(score_name)))  
+	rownames(df)  <- df$gene_name
+	col_fun1  <-  circlize::colorRamp2(c(-1,0,1), viridis(3))
+	col_fun2  <- circlize::colorRamp2(range(df[, score_name]), c("white", "#4287f5"))
+	ha  <-  HeatmapAnnotation("Ageing"  = df[, ageing],
+			  "Reference" = df[, ref],
+			col = list("Ageing" = col_fun1,
+				   "Reference"  = col_fun1),
+			show_legend = c(T, F),
+			annotation_name_side = "left",
+   			annotation_legend_param = list("Ageing" = list(title = "R:\n rna ~ prot")))
+	p <- ComplexHeatmap::Heatmap(t(df %>% 
+				dplyr::select(score_name)),
+			top_annotation =  ha,
+			height = unit(.7, "cm"),
+			show_column_names = F ,
+			show_row_names = F,
+			name = paste0("Ranking:\n", score_name),
+			col = col_fun2,
+			column_dend_height = unit(20, "mm"))
+	pdf(paste0(out, score_name, ".pdf"))
+	draw(p)
+	dev.off()
+	p <- ggplotify::as.ggplot(grid.grabExpr(draw(p)))
+	return(p)
+}
+```
+
+## Comparison 1 : HA and YG
+
+- Reference group = YG
+- Ageing group = HA
+
+Of the positively correlated genes in YG:
+	- a) which decouple with HA
+	- b) which anti-correlate with HA?
+	- c) which increase in correlation in HA?
+
+
+```{r}
+gene_cl %>% dplyr::filter(YG > 0) %>%
+	dplyr::mutate(S1_a = -abs(HA) + YG,
+		      S1_b = -HA + trans(YG),
+		      S1_c = HA - trans(YG)) -> df_scorings
+```
+
+Plot the gene score distribution
+
+```{r echo = F}
+p_df <- melt(df_scorings %>%
+	     dplyr::filter(YG > 0) %>%
+	     dplyr::select(gene_name, HA, YG, S1_a, S1_b, S1_c), id.vars = c("gene_name", "HA", "YG")) %>%
+	dplyr::rename(Question = variable, Score = value) %>%
+	melt(., id.vars = c("gene_name", "Question"))
+p1 <- ggplot(p_df, aes(x = value, col = variable)) +
+	geom_density(aes(y = ..density..)) +
+	scale_color_manual(values = c("HA" = cols[["HA"]], "YG" = cols[["YG"]], "Score" = "#4287f5")) +
+	theme_light() +
+	geom_rug(data = p_df %>% dplyr::filter(variable %in% c("Score")), aes(x = value, col = variable), sides = "b") +
+	facet_wrap(~Question, scales = "free", ncol = 1) +
+	theme(legend.position = "bottom") +
+	labs(x = "Value", y = "Density", col = "Variable") 
+p1a <- score_map(df_scorings,
+		score_name = "S1_a",
+		ref = "YG",
+		ageing = "HA",
+		outdir = out)
+p1b <- score_map(df_scorings,
+		score_name = "S1_b",
+		ref = "YG",
+		ageing = "HA",
+		outdir = out)
+p1c <- score_map(df_scorings,
+		score_name = "S1_c",
+		ref = "YG",
+		ageing = "HA",
+		outdir = out)
+
+the_plot_1 <- p1 | (p1a / p1b / p1c)
+```
+
+## Comparison 2 : PD and YG
+
+- Reference group = YG
+- Ageing group = PD
+
+Of the positively correlated genes in YG:
+	- a) which decouple with PD
+	- b) which anti-correlate with PD?
+	- c) which increase in correlation in PD?
+
+```{r}
+gene_cl_pd %>% dplyr::filter(YG > 0) %>%
+	dplyr::mutate(S2_a = -abs(PD) + YG,
+		      S2_b = -PD + trans(YG),
+		      S2_c = PD - trans(YG)) -> df_2
+df_scorings <- dplyr::left_join(df_scorings, (gene_cl_pd %>%
+				dplyr::select(gene_name, PD)),
+				by = "gene_name") %>%
+	dplyr::left_join(., (df_2 %>% dplyr::select(gene_name, S2_a, S2_b, S2_c)),
+			 by  = "gene_name")
+```
+
+Plot the gene score distribution
+
+```{r echo = F}
+p_df <- melt(df_scorings %>%
+	     dplyr::filter(YG > 0, !is.na(PD)) %>%
+	     dplyr::select(gene_name, PD, YG, S2_a, S2_b, S2_c), id.vars = c("gene_name", "PD", "YG")) %>%
+	dplyr::rename(Question = variable, Score = value) %>%
+	melt(., id.vars = c("gene_name", "Question"))
+p1 <- ggplot(p_df, aes(x = value, col = variable)) +
+	geom_density(aes(y = ..density..)) +
+	scale_color_manual(values = c("PD" = cols[["PD"]], "YG" = cols[["YG"]], "Score" = "#4287f5")) +
+	theme_light() +
+	geom_rug(data = p_df %>% dplyr::filter(variable %in% c("Score")), aes(x = value, col = variable), sides = "b") +
+	facet_wrap(~Question, scales = "free", ncol = 1) +
+	labs(x = "Value", y = "Density", col = "Variable")
+p1a <- score_map(df_scorings,
+		score_name = "S2_a",
+		ref = "YG",
+		ageing = "PD",
+		outdir = out)
+p1b <- score_map(df_scorings,
+		score_name = "S2_b",
+		ref = "YG",
+		ageing = "PD",
+		outdir = out)
+p1c <- score_map(df_scorings,
+		score_name = "S2_c",
+		ref = "YG",
+		ageing = "PD",
+		outdir = out)
+
+the_plot_2 <- p1 | (p1a / p1b / p1c)
+```
+
+## Comparison 3 : PD and HA
+
+- Reference group = HA
+- Ageing group = PD
+
+Of the positively correlated genes in HA:
+	- a) which decouple with PD
+	- b) which anti-correlate with PD?
+	- c) which increase in correlation in PD?
+
+```{r}
+df_scorings %>% dplyr::filter(HA > 0, !is.na(PD)) %>%
+	dplyr::mutate(S3_a = -abs(PD) + HA,
+		      S3_b = -PD + trans(HA),
+		      S3_c = PD - trans(HA)) -> df_2
+df_scorings %<>% dplyr::left_join(., (df_2 %>% dplyr::select(gene_name, S3_a, S3_b, S3_c)),
+			 by  = "gene_name")
+```
+
+Plot the gene score distribution
+
+```{r echo = F}
+p_df <- melt(df_scorings %>%
+	     dplyr::filter(HA > 0) %>%
+	     dplyr::select(gene_name, PD, HA, S3_a, S3_b, S3_c), id.vars = c("gene_name", "PD", "HA")) %>%
+	dplyr::rename(Question = variable, Score = value) %>%
+	melt(., id.vars = c("gene_name", "Question"))
+p1 <- ggplot(p_df, aes(x = value, col = variable)) +
+	geom_density(aes(y = ..density..)) +
+	scale_color_manual(values = c("PD" = cols[["PD"]], "HA" = cols[["HA"]], "Score" = "#4287f5")) +
+	theme_light() +
+	geom_rug(data = p_df %>% dplyr::filter(variable %in% c("Score")), aes(x = value, col = variable), sides = "b") +
+	facet_wrap(~Question, scales = "free", ncol = 1) +
+	labs(x = "Value", y = "Density", col = "Variable")
+p1a <- score_map(df_scorings,
+		score_name = "S3_a",
+		ref = "HA",
+		ageing = "PD",
+		outdir = out)
+p1b <- score_map(df_scorings,
+		score_name = "S3_b",
+		ref = "HA",
+		ageing = "PD",
+		outdir = out)
+p1c <- score_map(df_scorings,
+		score_name = "S3_c",
+		ref = "HA",
+		ageing = "PD",
+		outdir = out)
+the_plot_3 <- p1 | (p1a / p1b / p1c)
+```
+
+## Pathway enrichment analysis for each gene score
+
+
+### wanted to reproduce results for generating suppl. material (18/03/21)
+ermineR doesnt work anymore
+cannot download ontology from http://archive.geneontology.org/latest-termdb/go_daily-termdb.rdf-xml.gz
+Fromat rdf is deprecated.
+In this issue I found a "recent" file that I could use.
+https://github.com/geneontology/helpdesk/issues/302
+This was uploaded by the ermineR developer here: https://www.dropbox.com/s/05i1qrc30dedoqr/go_daily-termdb.rdf-xml.gz?dl=0
+It is now in ./referenceData, was unziped and and will be used for the arg geneSetDescription until they fix ermineR.
+
+
+```{r}
+#gsr_annot <- GetAnnoFiles("Generic_human")
+do_gsr <-function(df, score_name, which_alpha = 0.05, bigIsBetter = TRUE, iterations = 200000, tdir = out, return_id = F, custom_geneset = NULL, append_excel = TRUE, cluster = F) {
+ if(append_excel == F & file.exists(paste0(tdir,"Additional_file_3.xlsx"))) {
+	 file.remove(paste0(tdir,"Additional_file_3.xlsx"))
+ }
+ rownames(df)  <- df$gene_name
+ df <- df %>% dplyr::select(gene_name, all_of(score_name)) %>%
+	na.omit(.)
+ if (!is.null(custom_geneset)) {
+ ermineR::gsr(scores = df,
+	        geneReplicates = "best",
+		pAdjust = "FDR",
+		minClassSize = 20,
+		maxClassSize = 10000,
+         	scoreColumn = score_name,
+		iterations = iterations,
+		bigIsBetter = bigIsBetter,
+	     	annotation = NULL,
+		geneSetDescription = NULL,
+	     	customGeneSets = custom_geneset)$results -> pea
+pea
+
+ } else {
+  ermineR::gsr(scores = df,
+	        geneReplicates = "best",
+		pAdjust = "FDR",
+		iterations = iterations,
+		minClassSize = 5,
+		maxClassSize = 250,
+         	scoreColumn = score_name,
+		bigIsBetter = bigIsBetter,
+	     	annotation = gsr_annot,
+		geneSetDescription  = "./referenceData/go_daily-termdb.rdf-xml",
+	     	aspects = c("C", "M", "B"))$results -> pea
+ } 
+ res <- pea %>% dplyr::arrange(CorrectedPvalue) %>%
+	dplyr::filter(CorrectedPvalue < which_alpha)%>%
+	dplyr::select(ID, CorrectedPvalue, Name, GeneMembers, NumGenes)
+ write.table(x = res,
+	    file = paste0(tdir, score_name, ".txt"),
+	    row.names = F, col.names = T,
+	    quote = F, 
+	    sep = "\t")
+ if(!is.null(custom_geneset)) {
+	 score_name = paste0(score_name,"_mitocarta")
+ }
+ if(nrow(res) > 6 & cluster == T) {
+ maxP <- 200
+ pea %>%
+        dplyr::filter(CorrectedPvalue < which_alpha) %>%
+        dplyr::arrange(CorrectedPvalue) %>%
+        dplyr::select(Name, GeneMembers, CorrectedPvalue, NumGenes) -> obj
+    pathways <- apply(obj, 1, function(x) unlist(strsplit(x[[2]], '\\|')))
+    names(pathways) <- obj$Name
+    pathways <- qdapTools::list2df(pathways, col1 = "gene", col2 = "Name")[,c(2,1)]
+    clusters <- cluster_pathways(pathways, method = "overlap", threshold = 0.4, subsetsize = maxP)
+    names(clusters) <- c("Name", "members")
+    # add fishers to aggr pvalues to sort clusters
+    clusters <- left_join(clusters, obj %>% dplyr::select(-GeneMembers, members = Name), by = "members") %>%
+	    dplyr::group_by(Name) %>%
+        dplyr::mutate(aggr.p = aggregation::fisher(CorrectedPvalue), log10P = -log10(CorrectedPvalue)) %>%
+        dplyr::arrange(CorrectedPvalue)
+   
+maxD <- 150
+pdf(paste0(tdir, score_name, "_cluster.pdf"))
+    draw_treemap(dtf = clusters %>%
+                         dplyr::arrange(desc(abs(log10P))) %>%
+                         head(n = maxD),
+                 title = score_name)                               
+dev.off()
+	clusters %>%
+		   dplyr::select(Name, members, CorrectedPvalue, aggr.p) %>%
+		   dplyr::arrange(aggr.p) %>%
+	           dplyr::mutate(aggr.p = format.pval(aggr.p)) %>%
+		   as.data.frame(.) -> clusters
+ 	
+	rbind(clusters, pea %>% dplyr::filter(!(Name %in% clusters$members),
+					      CorrectedPvalue < which_alpha) %>%
+	      			dplyr::mutate(members = NA, aggr.p = NA) %>%
+				dplyr::select(Name, members, CorrectedPvalue, aggr.p)) -> clusters
+  	
+	write.xlsx(clusters,
+		paste0(tdir, "Additional_file_3.xlsx"),
+		sheetName = score_name, 
+	  	col.names = TRUE,
+	  append = append_excel)	
+ 		DT::datatable(clusters %>%
+		       dplyr::group_by(Name) %>%
+		       dplyr::mutate(no_members = n()) %>%
+		       dplyr::arrange(aggr.p, no_members), 
+		extensions = 'Buttons',
+		options = list(dom = 'Bfrtip',
+			       buttons = c('copy', 'csv', 'excel', 'pdf', 'print')))
+	
+ } else {
+	 pea %>% 
+		dplyr::filter(CorrectedPvalue < which_alpha) %>%
+		dplyr::arrange(CorrectedPvalue) %>%
+		dplyr::select(ID, Name, CorrectedPvalue) %>%
+		as.data.frame(.) -> df
+	if(nrow(df) > 0) {
+		write.xlsx(df,
+		paste0(tdir, "Additional_file_3.xlsx"),
+		sheetName = score_name, 
+	  	col.names = TRUE,
+	  append = append_excel)
+	} else {
+	write.xlsx("No significant enrichment",
+		paste0(tdir, "Additional_file_3.xlsx"),
+		sheetName = score_name, 
+	  	col.names = TRUE,
+	  append = append_excel)
+	}
+ 	 DT::datatable(pea %>% dplyr::arrange(CorrectedPvalue) %>%
+		       dplyr::select(ID, Name, CorrectedPvalue),
+		extensions = 'Buttons',
+		options = list(dom = 'Bfrtip',
+			       buttons = c('copy', 'csv', 'excel', 'pdf', 'print')))
+ }
+ }
+```
+
+### Question 1: Changes in coupling in healthy ageing
+
+```{r echo = F}
+the_plot_1
+```
+
+
+#### S1 Decoupling:
+
+```{r}
+do_gsr(df_scorings, "S1_a", which_alpha = 0.05, append_excel = F)
+```
+
+We found no enrichment for genes the decouple with HA.
+We were interested whether the genes are connected in a protein interaction network based on evidence from STRING from:
+ - experimental experimental evidence
+ - neighborhood
+ - coexpression 
+ 
+
+To investigate the decoupled genes in this manner, we look at the score distribution and choose a hard threshold,
+to select the top genes of S1a ranking. 
+
+```{r echo = F}
+quantile(df_scorings$S1_a)
+cutoff = quantile(df_scorings$S1_a, probs = 0.9)
+```
+
+We choose the cutoff = 0.5, which is approx.
+the third quantile of S1_a, to select all genes for which S1_a > cutoff for the PPI of decoupled genes
+
+--> edit increasedthe cutoff to 0.9, to have fewer nodes in the network
+
+```{r echo = F} 
+library(igraph)
+library(coexnet)
+
+
+S1_a_ppi_df <- df_scorings %>%
+	dplyr::filter(S1_a > cutoff) 
+ID <- S1_a_ppi_df %>% 
+	dplyr::pull(gene_name)
+ppi <- ppiNet(molecularIDs = ID,evidence = c("neighborhood","coexpression","experiments"))
+col_fun1 <- colorRampPalette(c("white", "#4287f5"))
+graphCol = col_fun1(300)[as.numeric(cut(S1_a_ppi_df$S1_a,breaks = 200))] 
+```
+Little n analysis
+
+```{r echo = F} 
+edge_density(ppi, loops=F)
+# transitivity 
+transitivity(ppi, type="global")
+# (length of the shortest path between two nodes)
+diameter(ppi, directed=F, weights=NA)
+deg <- degree(ppi, mode="all")
+hist(deg, breaks=1:vcount(ppi)-1, main="Histogram of node degree")
+# For undirected matrices the adjacency matrix is symmetric and the hub scores are the same as authority scores, see authority_score.
+hs <- hub_score(ppi, weights=NA)$vector
+hs_color  <- rep("black", length(hs)) 
+hs_color[which(hs > 0.8)] <- "violetred2"
+# Community detection based on edge betweenness (Newman-Girvan)
+# High-betweenness edges are removed sequentially (recalculating at each step) and the best partitioning of the network is selected.
+ceb <- cluster_edge_betweenness(ppi) 
+```
+
+
+```{r echo = F}
+library(fields)
+set.seed(1)
+deg <- degree(ppi, mode="all")
+ppi <- set_vertex_attr(ppi, "Score", index = V(ppi), value = S1_a_ppi_df$S1_a)
+legend_info <- data.frame("Score" = S1_a_ppi_df$S1_a,
+			  "col" = graphCol) %>%
+	dplyr::arrange(desc(Score))
+legend_image <- as.raster(matrix(legend_info$col, ncol=1))
+wc <- cluster_edge_betweenness(ppi)
+mark <- membership(wc)
+mark <- communities(wc)[which(sapply(communities(wc), length) > 5)]
+set.seed(140)
+pdf("./result_figs/Draft/ppi_ha.pdf", width = 10, height = 10)
+p <- plot(ppi, 
+     frame = T,
+     mark.groups = mark,
+     mark.shape = 0.2,
+     mark.col = rep("lightgrey", length(mark)),  
+     mark.border = "black",
+     vertex.color = graphCol,
+     vertex.label.cex = .8,
+     vertex.frame.width = 10,
+     edge.color = "black",
+#     edge.curved= seq(-0.5, 0.5, length = ecount(ppi)),
+#     loop.angle = 120,
+     vertex.label.dist=.8,
+     vertex.size = 1.5*deg,
+     layout = layout_nicely)
+rasterImage(legend_image, -1.1, -1.2, -1, -.5 )
+text(x = - 0.95,
+     y = c(-0.51, -0.85 , -1.2),	   
+     labels = c(paste0("-", round(max(legend_info$Score), digit = 2)),
+		paste0("-", round(median(legend_info$Score), digit = 2)),
+		paste0("-", round(min(legend_info$Score), digit = 2))))
+dev.off()
+```
+
+
+
+#### S1 Anti-correlation:  
+
+```{r}
+do_gsr(df_scorings, "S1_b", which_alpha = 0.05) 
+```
+
+#### S1 Increase in correlation:  
+
+```{r}
+do_gsr(df_scorings, "S1_c", which_alpha = 0.05)
+```
+
+
+### Question 2: Changes in coupling in ageing with PD  
+
+```{r echo = F}
+the_plot_2
+```
+
+
+#### S2 Decoupling:  
+
+```{r}
+do_gsr(df_scorings, "S2_a", which_alpha = 0.05)
+```
+
+#### S2 Anti-correlation:  
+
+```{r}
+do_gsr(df_scorings, "S2_b", which_alpha = 0.05)
+```
+
+#### S2 Increase in correlation:  
+
+```{r}
+do_gsr(df_scorings, "S2_c", which_alpha = 0.05)
+```
+
+### Question 3: Changes in coupling from HA to PD  
+
+```{r echo = F}
+the_plot_3
+```
+
+
+#### S3 Decoupling:  
+
+```{r}
+do_gsr(df_scorings, "S3_a", which_alpha = 0.05)
+```
+
+#### S3 Anti-correlation:  
+
+```{r}
+do_gsr(df_scorings, "S3_b", which_alpha = 0.05)
+```
+
+#### S3 Increase in correlation:   
+
+```{r}
+do_gsr(df_scorings, "S3_c", which_alpha = 0.05)
+```
+
+## Removing proteasome subuntis to see if enrichment sig. of pathways for neg. corr genes in PD changes
+
+
+YG ->  PD
+
+```{r}
+S2_b_mod <- df_scorings %>% 
+	dplyr::mutate(S2_b_mod = ifelse(grepl("PSM", gene_name), NA, S2_b))
+
+gsr_S2_b_mod <- do_gsr(S2_b_mod, "S2_b_mod", which_alpha = 0.05, append_excel = T)
+gsr_S2_b_mod
+```
+
+HA ->  PD
+
+```{r}
+S3_b_mod <- df_scorings %>% 
+	dplyr::mutate(S3_b_mod = ifelse(grepl("PSM", gene_name), NA, S3_b))
+
+gsr_S3_b_mod <- do_gsr(S3_b_mod, "S3_b_mod", which_alpha = 0.05, append_excel = T)
+gsr_S3_b_mod
+```
+
+### range of correlation proteasomal subunits in PD
+
+```{r eval = F}
+df_scorings %>% 
+	dplyr::filter(grepl("PSM", gene_name)) %>%
+	dplyr::select(PD) %>% nrow(.)
+	dplyr::summarize(n(),range(PD), median(PD), sd(PD))
+```
+
