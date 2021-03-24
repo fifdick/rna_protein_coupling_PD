@@ -25,17 +25,46 @@ BiocManager::install(<"packagename">)
 * The paper discusses results of pathway enrichment analysis that were performed on ranked gene lists.
 * The ranking is based on the Pearson correlation coefficient (gene-wise, across-samples and within groups (HA, YG, PD). 
 * The ranking takes into account the difference in correlation between groups (see paper methods).
-* The genelist ranking (based on the correlation coefficients given in `./results/rds/gene_cl.rds` and `./results/rds/gene_cl_pd.rds` are generated in `./pea.Rmd`.
+* The genelist ranking (based on the correlation coefficients given in `./results/rds/gene_cl.rds` and `./results/rds/gene_cl_pd.rds`) are generated in `./pea.Rmd`.
 * The pathway enrichment analysis is performed with [ermineR](https://github.com/PavlidisLab/ermineR) in `./pea.Rmd`. 
 * Requirements for this analysis are the `.rds` files in `./results/rds/` and the GO annotations for ermineR in `./referenceData/go_daily-termdb.rdf-xml`. R packages needed are listed at the beginning of the `./pea.Rmd` file.
 * The knitted, self_contained html of `./pea.Rmd` is also available (`./pea.html`, download and open in browser) and has all pathway enrichment results listed.
 
 ### Reproduce Paper Figures
 
+* The main figures (excluding figure 1, which is a schematic figure) can be reproduced with `./analysis.Rmd`.
+* The code loads `.rds` files need for the analysis form `./rdsData/`. These are generated in `./preprocess.Rmd` as described below.
+* The figures are available in `./result_figs/Draft/` and `./result_figs/Supp/`.
+* The `analysis.Rmd` also creates and saves the `gene_cl.rds` and `gene_cl_pd.rds` files to `./results/rds/`.
+* Would not advice to knit this file. Hasnt been edited appropriately or tested. The purpose is mainly to document code.
+
 ### Rerun analysis from scratch
+
+* The rawest data available are transcript-level counts in `./salmonOut` and protein intensities in `./rdsData/rawData.rds`.
+* With these and the metadata in `./rdsData/info.rds` `./rdsData/info_rna.rds` and `./rdsData/info_rna_pd.rds` all results can be reproduced.
+* The file `./preprocess.Rmd`, loads the required data and:
+ * aggregates transcript-level counts from `./salmonOut` to gene-level using [tximport](https://bioconductor.org/packages/release/bioc/html/tximport.html) and the annotation file `./referenceData/gencode.v32.annotation.gtf` (needs to be unzipped).
+ * filters out zeros and applies batch correction to the proteomics data in `./rdsData/rawData.rds`
+ * saves all generated `.rds` files to `./rdsData`.
+* Utility functions (also the batch correction function) are loaded from `./functions.R`.
+* Next steps would be to go through `./analysis.Rmd` and then `./pea.Rmd`
 
 
 ## Content
+
+* `./preprocess.Rmd` Code to preprocess data (Transcript counts and raw protein intensities)
+* `./analysis.Rmd` Code to reproduce paper figures 
+* `./pea.Rmd`, `./pea.html` code to run pathway enrichment analysis, knitted html to browse through results
+* `./referenceData/` holds reference data needed for the analysis. Remember to unzip compressed files (before running `./preprocess.Rmd`)
+* `./salmonOut/` output from [Salmon](https://salmon.readthedocs.io/en/latest/salmon.html) for each sample in the analysis. Details on parameters of the salmon command see methods section of the paper. Sample_ids (Salmon dir. names) correspond to RNAseq_id (see also supplementary File 1, or './rdsData/info.rds`.
+* `./rdsData/` 
+  * `info.rds` holds all sample metadata. (The proteomics data uses reporter.intensity.id as sample identifier, this can be mapped to RNAseq_id for the RNASeq data).
+  * `info_rna.rds` and `info_rna_pd.rds` holds sample metadata for RNA data (including RIN) for the groups HA, YG and PD respectively. 
+  * `cpmAll.rds` and `cpmAll_pd.rds` holds gene-level counts in counts per million (CPM), after filtering. These files are created in `./preprocess.Rmd`
+  * `rawData.rds` holds protein intensities before filtering and before normalization. This file is used in `./preprocess.Rmd` to generate the batch corrected matrix which is then used in the analysis.
+* `./result_figs` All paper figures (some might have been edited with graphics software afterwards and thus dont resemble exactly the same figure as in the paper)
+* `./results` holds the rds files for the pathway enrichment analysis (i.e. correlation coefficients for the groups (YG, HA and PD).
+* Each `.Rmd` file loads functions from `./functions.R`. 
 
 ## Version info 
 
