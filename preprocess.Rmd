@@ -8,32 +8,22 @@ runtime: shiny
 ---
 
 ```{r}
-library(boot)
-library(mixOmics)
+library(ensembldb)
 library(ggbiplot)
 library(tibble)
-library(ermineR)
 library(ggpubr)
 library("DESeq2")
 require("ggplot2")
+library(preprocessCore)
 require("kableExtra")
-#install.packages("devtools")
-#devtools::install_github("rlbarter/superheat")
-#library(superheat)
 require("ggfortify")
 require("readxl")
-#library(PathCluster)
 require("magrittr")
 require("gridExtra")
-#library("shinythemes")
-library("dbscan")
-require("proteus")
 require("dplyr")
 require("tidyr")
-require("preprocessCore")         
 require("readr")
 require("knitr")
-require("kableExtra")
 require("ggpubr")
 require("stringr")
 require("pheatmap")
@@ -42,16 +32,9 @@ require("ggrepel")
 require("patchwork")
 require("ggplotify")
 library("magrittr")
-library("DRIMSeq")
-library("DEXSeq")
-library("DTU")
 library(ComplexHeatmap)
 library(viridis)
 library(reshape2)
-library(markerGeneProfile)
-library("homologene")
-library("markerGeneProfile")
-data("mouseMarkerGenesCombined")
 ```
 
 ##  Utils
@@ -92,9 +75,6 @@ From the ProteinGroups (maxQuant output, not provided) file create three count m
 * remove zeros
 * with quantile normalization 
 * with quantile normalization followed by batch correction
-* normalized with the TMT normalization function of Proteus
-* normalized with TMT norm. func. of Proteus followed by batch correction
-
 
 ```{r}
 rawData <- readRDS("./rdsData/rawData.rds")
